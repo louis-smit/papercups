@@ -1,7 +1,8 @@
 defmodule ChatApiWeb.GithubController do
   use ChatApiWeb, :controller
 
-  alias ChatApi.{Github, Issues}
+  alias ChatApi.{Conversations, Github, Issues, Messages}
+  alias ChatApi.Conversations.Conversation
   alias ChatApi.Github.GithubAuthorization
   alias ChatApi.Issues.Issue
 
@@ -73,8 +74,8 @@ defmodule ChatApiWeb.GithubController do
     end
   end
 
-  @spec repos(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def repos(conn, _payload) do
+  @spec list_repos(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def list_repos(conn, _payload) do
     with %{account_id: account_id} <- conn.assigns.current_user,
          %GithubAuthorization{} = auth <- Github.get_authorization_by_account(account_id),
          {:ok, %{body: %{"repositories" => repos}}} <- Github.Client.list_installation_repos(auth) do
@@ -87,20 +88,21 @@ defmodule ChatApiWeb.GithubController do
     end
   end
 
-  @spec issues(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def issues(conn, %{"url" => url}) do
+  @spec list_issues(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def list_issues(conn, %{"url" => url}) do
     authorization =
       conn
       |> Pow.Plug.current_user()
       |> Map.get(:account_id)
       |> Github.get_authorization_by_account()
 
-    with {:ok, %{owner: owner, repo: repo, id: issue_id}} <- parse_github_issue_url(url),
+    with {:ok, %{owner: owner, repo: repo, id: issue_id}} <-
+           Github.Helpers.parse_github_issue_url(url),
          {:ok, %{body: %{"title" => _title, "body" => _body} = result}} <-
            Github.Client.retrieve_issue(authorization, owner, repo, issue_id) do
       json(conn, %{data: [result]})
     else
-      {:error, :unrecognized_github_issue_url} ->
+      {:error, :invalid_github_issue_url} ->
         {:error, :unprocessable_entity, "Invalid GitHub issue URL"}
 
       error ->
@@ -110,7 +112,7 @@ defmodule ChatApiWeb.GithubController do
     end
   end
 
-  def issues(conn, %{"owner" => owner, "repo" => repo}) do
+  def list_issues(conn, %{"owner" => owner, "repo" => repo}) do
     authorization =
       conn
       |> Pow.Plug.current_user()
@@ -119,6 +121,24 @@ defmodule ChatApiWeb.GithubController do
 
     with {:ok, %{body: body}} <-
            Github.Client.list_issues(authorization, owner, repo) do
+      json(conn, %{data: body})
+    else
+      error ->
+        Logger.error("Error retrieving GitHub issues for #{owner}/#{repo}: #{inspect(error)}")
+
+        json(conn, %{data: []})
+    end
+  end
+
+  def create_issue(conn, %{"owner" => owner, "repo" => repo, "issue" => issue}) do
+    authorization =
+      conn
+      |> Pow.Plug.current_user()
+      |> Map.get(:account_id)
+      |> Github.get_authorization_by_account()
+
+    with {:ok, %{body: body}} <-
+           Github.Client.create_issue(authorization, owner, repo, issue) do
       json(conn, %{data: body})
     else
       error ->
@@ -155,16 +175,81 @@ defmodule ChatApiWeb.GithubController do
     send_resp(conn, 200, "")
   end
 
-  defp parse_github_issue_url(url) do
-    path =
-      case String.split(url, "github.com/") do
-        [_protocol, path] -> path
-        _ -> ""
+  defp notify_channel_subscriptions(customer_id, %Issue{} = issue) do
+    ChatApiWeb.Endpoint.broadcast!(
+      "issue:lobby:" <> customer_id,
+      "issue:updated",
+      ChatApiWeb.IssueView.render("issue.json", issue: issue)
+    )
+  end
+
+  defp notify_linked_customers(
+         %Issue{
+           id: issue_id,
+           account_id: account_id,
+           creator_id: creator_id,
+           github_issue_url: github_issue_url
+         } = issue,
+         action
+       ) do
+    issue_id
+    |> Issues.list_customers_by_issue()
+    |> Enum.each(fn customer ->
+      notify_channel_subscriptions(customer.id, issue)
+
+      case Conversations.find_latest_conversation(account_id, %{"customer_id" => customer.id}) do
+        nil ->
+          nil
+
+        conversation ->
+          user_id = creator_id || get_conversation_agent_id(conversation)
+
+          emoji =
+            case action do
+              :closed -> ":white_check_mark:"
+              :reopened -> ":mega:"
+            end
+
+          %{
+            body:
+              "#{emoji} A GitHub issue that this person is subscribed to has been #{
+                to_string(action)
+              }: " <>
+                github_issue_url,
+            type: "bot",
+            private: true,
+            conversation_id: conversation.id,
+            account_id: account_id,
+            user_id: user_id,
+            sent_at: DateTime.utc_now()
+          }
+          |> Messages.create_and_fetch!()
+          |> Messages.Notification.broadcast_to_admin!()
+          |> Messages.Notification.notify(:slack)
+          |> Messages.Notification.notify(:mattermost)
+          |> Messages.Notification.notify(:webhooks)
+          # Make sure conversation is re-opened if it is currently closed
+          |> Messages.Helpers.handle_post_creation_hooks(%{status: "open"})
+      end
+    end)
+  end
+
+  defp get_conversation_agent_id(%Conversation{account_id: account_id} = conversation) do
+    agent_id =
+      case conversation do
+        %Conversation{assignee_id: assignee_id} when not is_nil(assignee_id) ->
+          assignee_id
+
+        %Conversation{messages: [_ | _] = messages} ->
+          messages |> Enum.map(& &1.user_id) |> Enum.find(&(!is_nil(&1)))
+
+        _ ->
+          nil
       end
 
-    case String.split(path, "/") do
-      [owner, repo, "issues", id] -> {:ok, %{owner: owner, repo: repo, id: id}}
-      _ -> {:error, :unrecognized_github_issue_url}
+    case agent_id do
+      nil -> account_id |> ChatApi.Accounts.get_primary_user() |> Map.get(:id)
+      id -> id
     end
   end
 
@@ -223,6 +308,7 @@ defmodule ChatApiWeb.GithubController do
          %Issue{} = issue <-
            Issues.find_issue(%{account_id: account_id, github_issue_url: github_issue_url}) do
       {:ok, issue} = Issues.update_issue(issue, %{state: "done"})
+      Task.start(fn -> notify_linked_customers(issue, :closed) end)
 
       Logger.debug("Successfully updated issue state: #{inspect(issue)}")
     end
@@ -251,6 +337,7 @@ defmodule ChatApiWeb.GithubController do
          %Issue{} = issue <-
            Issues.find_issue(%{account_id: account_id, github_issue_url: github_issue_url}) do
       {:ok, issue} = Issues.update_issue(issue, %{state: "unstarted"})
+      Task.start(fn -> notify_linked_customers(issue, :reopened) end)
 
       Logger.debug("Successfully updated issue state: #{inspect(issue)}")
     end

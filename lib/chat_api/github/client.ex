@@ -93,15 +93,20 @@ defmodule ChatApi.Github.Client do
     |> Tesla.delete("/app/installations/#{installation_id}")
   end
 
-  def list_installation_repos(%GithubAuthorization{github_installation_id: installation_id}),
-    do: list_installation_repos(installation_id)
+  def list_installation_repos(authorization, query \\ [])
 
-  def list_installation_repos(installation_id) do
+  def list_installation_repos(
+        %GithubAuthorization{github_installation_id: installation_id},
+        query
+      ),
+      do: list_installation_repos(installation_id, query)
+
+  def list_installation_repos(installation_id, query) do
     {:ok, %{body: %{"token" => token}}} = generate_installation_access_token(installation_id)
 
     token
     |> oauth_client()
-    |> Tesla.get("/installation/repositories")
+    |> Tesla.get("/installation/repositories", query: query)
   end
 
   def list_issues(owner, repo),
@@ -119,6 +124,22 @@ defmodule ChatApi.Github.Client do
     token
     |> oauth_client()
     |> Tesla.get("/repos/#{owner}/#{repo}/issues")
+  end
+
+  def create_issue(
+        %GithubAuthorization{github_installation_id: installation_id},
+        owner,
+        repo,
+        issue
+      ),
+      do: create_issue(installation_id, owner, repo, issue)
+
+  def create_issue(installation_id, owner, repo, issue) do
+    {:ok, %{body: %{"token" => token}}} = generate_installation_access_token(installation_id)
+
+    token
+    |> oauth_client()
+    |> Tesla.post("/repos/#{owner}/#{repo}/issues", issue)
   end
 
   def retrieve_issue(owner, repo, issue_id),

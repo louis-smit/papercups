@@ -4,11 +4,12 @@ defmodule ChatApi.Emails.Email do
 
   alias ChatApi.Customers.Customer
   alias ChatApi.Messages.Message
+  alias ChatApi.Users.UserProfile
 
   @type t :: Swoosh.Email.t()
 
   @from_address System.get_env("FROM_ADDRESS") || ""
-  @backend_url System.get_env("BACKEND_URL") || ""
+  @backend_url System.get_env("BACKEND_URL", "app.papercups.io")
 
   defstruct to_address: nil, message: nil
 
@@ -140,7 +141,7 @@ defmodule ChatApi.Emails.Email do
       %{email: email, profile: nil} ->
         company || email
 
-      %{email: email, profile: profile} ->
+      %{email: email, profile: %UserProfile{} = profile} ->
         profile.display_name || profile.full_name || company || email
 
       _ ->
@@ -161,12 +162,87 @@ defmodule ChatApi.Emails.Email do
     <p>You've received a new message from your chat with
     <a href="#{customer.current_url}">#{company}</a>:</p>
     <hr />
+    #{Enum.map(messages, fn msg -> format_message_html(msg, company) end)}
+    <hr />
+    <p>
+    Best,<br />
+    #{from}
+    </p>
+    """
+  end
+
+  defp format_message_html(message, company) do
+    markdown = """
+    **#{format_sender(message, company)}**\s\s
+    #{message.body}
+    """
+
+    fallback = """
+    <p>
+      <strong>#{format_sender(message, company)}</strong><br />
+      #{message.body}
+    </p>
+    """
+
+    case Earmark.as_html(markdown) do
+      {:ok, html, _} -> html
+      _ -> fallback
+    end
+  end
+
+  def mention_notification(
+        to: to,
+        from: from,
+        reply_to: reply_to,
+        company: company,
+        messages: messages,
+        user: user
+      ) do
+    new()
+    |> to(to)
+    |> from({from, @from_address})
+    |> reply_to(reply_to)
+    |> subject("You were mentioned in a message on Papercups!")
+    |> html_body(mention_notification_html(messages, from: from, to: user, company: company))
+    |> text_body(mention_notification_text(messages, from: from, to: user, company: company))
+  end
+
+  # TODO: figure out a better way to create templates for these
+  defp mention_notification_text(messages, from: from, to: _user, company: company) do
+    conversation_id = messages |> List.first() |> Map.get(:conversation_id)
+    dashboard_link = "#{get_app_domain()}/conversations/mentions?cid=#{conversation_id}"
+
+    """
+    Hi there!
+
+    You were mentioned in a message on Papercups:
+
     #{
       Enum.map(messages, fn msg ->
-        "<p><strong>#{format_sender(msg, company)}</strong><br />#{msg.body}</p>"
+        format_sender(msg, company) <> ": " <> msg.body <> "\n"
       end)
     }
+
+    View in the dashboard at #{dashboard_link}
+
+    Best,
+    #{from}
+    """
+  end
+
+  defp mention_notification_html(messages, from: from, to: _user, company: company) do
+    conversation_id = messages |> List.first() |> Map.get(:conversation_id)
+    dashboard_link = "#{get_app_domain()}/conversations/mentions?cid=#{conversation_id}"
+
+    """
+    <p>Hi there!</p>
+    <p>You were mentioned in a message on Papercups:</p>
     <hr />
+    #{Enum.map(messages, fn msg -> format_message_html(msg, company) end)}
+    <hr />
+    <p>
+    (View in the <a href="#{dashboard_link}">dashboard</a>)
+    </p>
     <p>
     Best,<br />
     #{from}
@@ -250,7 +326,8 @@ defmodule ChatApi.Emails.Email do
         do: "#{from_address} has invited you to join #{company} on Papercups!",
         else: "#{from_name} (#{from_address}) has invited you to join #{company} on Papercups!"
 
-    invitation_url = "#{get_app_domain()}/registration/#{invitation_token}"
+    invitation_url =
+      "#{get_app_domain()}/register/#{invitation_token}?#{URI.encode_query(%{email: to_address})}"
 
     new()
     |> to(to_address)

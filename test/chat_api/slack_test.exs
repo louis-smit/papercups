@@ -50,8 +50,8 @@ defmodule ChatApi.SlackTest do
                  "reply"
                )
 
-      # :ok if the account is different
-      assert :ok =
+      # :error if connecting to a channel that another account has already linked
+      assert {:error, :duplicate_channel_id} =
                Slack.Validation.validate_authorization_channel_id(
                  @slack_channel_id,
                  other_account_id,
@@ -271,7 +271,7 @@ defmodule ChatApi.SlackTest do
     end
 
     test "Notification.validate_send_to_primary_channel/2 returns :error if the message when the message is not an initial message and a thread does not exist" do
-      assert :error =
+      assert {:error, :conversation_exists_without_thread} =
                Slack.Notification.validate_send_to_primary_channel(nil, is_first_message: false)
     end
   end
@@ -351,6 +351,7 @@ defmodule ChatApi.SlackTest do
       customer_email = "*Email:*\n#{customer.email}"
       conversation_id = conversation.id
       channel = thread.slack_channel
+      message = insert(:message, customer: customer, user: nil)
 
       assert %{
                "blocks" => [
@@ -368,13 +369,13 @@ defmodule ChatApi.SlackTest do
                        "text" => ^customer_email
                      },
                      %{
-                       "text" => "*URL:*\nN/A"
+                       "text" => "*Source:*\n:speech_balloon: Chat"
                      },
                      %{
-                       "text" => "*Browser:*\nN/A"
+                       "text" => "*Last seen URL:*\nN/A"
                      },
                      %{
-                       "text" => "*OS:*\nN/A"
+                       "text" => "*Device:*\nN/A"
                      },
                      %{
                        "text" => "*Timezone:*\nN/A"
@@ -402,6 +403,7 @@ defmodule ChatApi.SlackTest do
                  channel: channel,
                  conversation: conversation,
                  customer: customer,
+                 message: message,
                  thread: nil
                })
     end
@@ -503,14 +505,6 @@ defmodule ChatApi.SlackTest do
       assert Slack.Helpers.identify_customer(bob) == "bob@bob.com"
       assert Slack.Helpers.identify_customer(test) == "Test User"
       assert Slack.Helpers.identify_customer(anon) == "Anonymous User"
-    end
-
-    test "Helpers.get_message_type/1 returns the message sender type" do
-      customer_message = insert(:message, user: nil)
-      user_message = insert(:message, customer: nil)
-
-      assert :customer = Slack.Helpers.get_message_type(customer_message)
-      assert :agent = Slack.Helpers.get_message_type(user_message)
     end
 
     test "Helpers.format_sender_id!/3 gets an existing user_id", %{account: account} do

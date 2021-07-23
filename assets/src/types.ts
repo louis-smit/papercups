@@ -7,6 +7,22 @@ export type Account = {
   users?: Array<User>;
   widget_settings: WidgetSettings;
   working_hours: Array<any>;
+  settings?: AccountSettings | null;
+};
+
+export type AccountSettings = {
+  disable_automated_reply_emails?: boolean | null;
+  conversation_reminders_enabled?: boolean | null;
+  conversation_reminder_hours_interval?: number | null;
+  max_num_conversation_reminders?: number | null;
+};
+
+export type CannedResponse = {
+  id: string;
+  name: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type User = {
@@ -17,8 +33,8 @@ export type User = {
   profile_photo_url?: string;
   created_at?: string;
   disabled_at?: string;
-  role?: 'user' | 'admin';
-  account_id?: string;
+  role: 'user' | 'admin';
+  account_id: string;
 };
 
 export type Customer = {
@@ -33,10 +49,8 @@ export type Customer = {
   first_seen?: any;
   host?: string;
   ip?: string;
-  // Date
-  last_seen: string;
   // Datetime
-  last_seen_at?: string;
+  last_seen_at: string;
   metadata?: any;
   os?: string;
   pathname?: string;
@@ -45,7 +59,9 @@ export type Customer = {
   time_zone?: string;
   updated_at?: string;
   title: string;
+  // Associations
   company?: Company;
+  conversations?: Array<Conversation>;
 };
 
 export type Company = {
@@ -59,12 +75,21 @@ export type Company = {
   updated_at: string;
 };
 
-export type MessageType = 'reply' | 'note';
+export type MessageType = 'reply' | 'note' | 'bot';
+export type MessageSource =
+  | 'chat'
+  | 'slack'
+  | 'mattermost'
+  | 'email'
+  | 'sms'
+  | 'api'
+  | 'sandbox';
 
 export type Message = {
   id: string;
   body: string;
-  type?: 'reply' | 'note' | 'bot';
+  type?: MessageType;
+  source?: MessageSource;
   private?: boolean;
   created_at: string;
   sent_at?: string;
@@ -74,8 +99,11 @@ export type Message = {
   conversation_id: string;
   user_id?: number;
   user?: User;
-  file_ids?: string[];
-  attachments?: Attachment[];
+  file_ids?: Array<string>;
+  attachments?: Array<Attachment>;
+  mentioned_user_ids?: Array<number>;
+  mentions?: Array<any>;
+  metadata?: any;
 };
 
 export type FileUpload = {
@@ -107,6 +135,7 @@ export type Conversation = {
   status?: string;
   assignee_id?: number;
   tags?: Array<Tag>;
+  mentions?: Array<any>;
 };
 
 export type CustomerNote = {
@@ -143,6 +172,25 @@ export type Issue = {
   github_issue_url?: string;
   created_at: string;
   updated_at: string;
+};
+
+export type LambdaStatus = 'pending' | 'active' | 'inactive';
+
+export type Lambda = {
+  id: string;
+  object: 'lambda';
+  account_id: string;
+  name: string;
+  description?: string;
+  code?: string;
+  language?: string;
+  runtime?: string;
+  status: LambdaStatus;
+  last_deployed_at?: string;
+  last_executed_at?: string;
+  created_at: string;
+  updated_at: string;
+  metadata?: string;
 };
 
 export type BrowserSession = {
@@ -237,4 +285,42 @@ export type Pagination = {
   page_number: number;
   total_pages?: number;
   total_entries?: number;
+};
+
+export type GoogleIntegrationClient = 'gmail' | 'sheets';
+export type GoogleIntegrationType = 'personal' | 'support';
+export type GoogleIntegrationParams = {
+  client: GoogleIntegrationClient;
+  type?: GoogleIntegrationType;
+};
+
+export type GoogleAuthParams = {
+  code: string;
+  state?: string | null;
+  scope?: string | null;
+};
+
+export type SlackAuthorizationSettings = {
+  sync_all_incoming_threads: boolean;
+  sync_by_emoji_tagging: boolean;
+  sync_trigger_emoji: string;
+  forward_synced_messages_to_reply_channel: boolean;
+};
+
+export type SlackAuthorization = {
+  id: string;
+  created_at: string;
+  channel: string;
+  configuration_url: string;
+  team_name: string;
+  settings: SlackAuthorizationSettings | null;
+};
+
+export type OnboardingStatus = {
+  has_configured_profile: boolean;
+  has_configured_storytime: boolean;
+  has_integrations: boolean;
+  is_chat_widget_installed: boolean;
+  has_invited_teammates: boolean;
+  has_upgraded_subscription: boolean;
 };

@@ -1,5 +1,6 @@
 defmodule ChatApiWeb.ConversationChannel do
   use ChatApiWeb, :channel
+  use Appsignal.Instrumentation.Decorators
 
   alias ChatApiWeb.Presence
   alias ChatApi.{Messages, Conversations}
@@ -75,6 +76,7 @@ defmodule ChatApiWeb.ConversationChannel do
     {:reply, {:ok, payload}, socket}
   end
 
+  @decorate channel_action()
   def handle_in("shout", payload, socket) do
     with %{conversation: conversation} <- socket.assigns,
          %{id: conversation_id, account_id: account_id} <- conversation,
@@ -98,6 +100,7 @@ defmodule ChatApiWeb.ConversationChannel do
     {:noreply, socket}
   end
 
+  @decorate channel_action()
   def handle_in("messages:seen", _payload, socket) do
     with %{conversation: conversation} <- socket.assigns,
          %{id: conversation_id} <- conversation do
@@ -151,6 +154,7 @@ defmodule ChatApiWeb.ConversationChannel do
     |> Messages.Notification.notify(:mattermost)
     |> Messages.Notification.notify(:new_message_email)
     |> Messages.Notification.notify(:webhooks)
+    |> Messages.Helpers.handle_post_creation_hooks()
   end
 
   # Add authorization logic here as required.

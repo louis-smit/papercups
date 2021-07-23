@@ -21,7 +21,11 @@ body {
 .TextArea--transparent,
 .TextArea--transparent:hover,
 .TextArea--transparent:focus,
-.TextArea--transparent:active {
+.TextArea--transparent:active,
+.TextArea--transparent > textarea,
+.TextArea--transparent > textarea:hover,
+.TextArea--transparent > textarea:focus,
+.TextArea--transparent > textarea:active {
   background: transparent;
   border: none;
   box-shadow: none;
@@ -30,14 +34,23 @@ body {
 
 .Text--markdown {
   overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .Text--markdown a {
   text-decoration: underline;
 }
 
+.Text--markdown p:not(:first-child) {
+  margin-top: 4px;
+}
+
 .Text--white {
   color: #fff;
+}
+
+.Text--white.ant-typography-secondary {
+  color: rgba(250, 250, 250, 0.8);
 }
 
 .Text--white > h1,

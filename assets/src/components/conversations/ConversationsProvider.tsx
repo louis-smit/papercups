@@ -1,5 +1,6 @@
 import React, {useContext} from 'react';
 import {debounce, throttle} from 'lodash';
+import {Socket} from 'phoenix';
 import * as API from '../../api';
 import {notification} from '../common';
 import {Account, Conversation, Message, User} from '../../types';
@@ -14,12 +15,14 @@ import {
   PresenceDiff,
   updatePresenceWithDiff,
 } from '../../presence';
+import {isUnreadConversation} from './support';
 import ConversationNotificationManager from './ConversationNotificationManager';
 
 type Inboxes = {
   all: {
     open: string[];
     assigned: string[];
+    mentioned: string[];
     priority: string[];
     closed: string[];
   };
@@ -32,6 +35,7 @@ const getInboxesInitialState = () => ({
   all: {
     open: [],
     assigned: [],
+    mentioned: [],
     priority: [],
     closed: [],
   },
@@ -88,7 +92,7 @@ export const ConversationsContext = React.createContext<{
 
 export const useConversations = () => useContext(ConversationsContext);
 
-type Props = React.PropsWithChildren<{}>;
+type Props = {socket: Socket} & React.PropsWithChildren<{}>;
 type State = {
   loading: boolean;
   account: Account | null;
@@ -130,17 +134,37 @@ export class ConversationsProvider extends React.Component<Props, State> {
     });
     const {id: accountId} = account;
 
-    this.notificationManager = new ConversationNotificationManager({
-      accountId,
-      onNewMessage: this.handleNewMessage,
-      onNewConversation: this.handleNewConversation,
-      onConversationUpdated: this.debouncedConversationUpdate,
-      onPresenceInit: this.handlePresenceInit,
-      onPresenceDiff: this.handlePresenceDiff,
-    });
+    this.notificationManager = new ConversationNotificationManager(
+      this.props.socket,
+      {
+        accountId,
+        onNewMessage: this.handleNewMessage,
+        onNewConversation: this.handleNewConversation,
+        onConversationUpdated: this.debouncedConversationUpdate,
+        onPresenceInit: this.handlePresenceInit,
+        onPresenceDiff: this.handlePresenceDiff,
+      }
+    );
     this.notificationManager.connect();
 
     await this.fetchAllConversations();
+  }
+
+  componentDidUpdate(prev: Props) {
+    if (prev.socket !== this.props.socket && this.state.account) {
+      this.notificationManager = new ConversationNotificationManager(
+        this.props.socket,
+        {
+          accountId: this.state.account.id,
+          onNewMessage: this.handleNewMessage,
+          onNewConversation: this.handleNewConversation,
+          onConversationUpdated: this.debouncedConversationUpdate,
+          onPresenceInit: this.handlePresenceInit,
+          onPresenceDiff: this.handlePresenceDiff,
+        }
+      );
+      this.notificationManager.connect();
+    }
   }
 
   componentWillUnmount() {
@@ -309,9 +333,10 @@ export class ConversationsProvider extends React.Component<Props, State> {
         return;
       }
 
-      const conversation = this.state.conversationsById[id];
+      const {conversationsById = {}, currentUser} = this.state;
+      const conversation = conversationsById[id];
 
-      if (conversation && !conversation.read) {
+      if (conversation && isUnreadConversation(conversation, currentUser)) {
         this.handleConversationRead(id);
       }
 
@@ -469,6 +494,9 @@ export class ConversationsProvider extends React.Component<Props, State> {
     const assignedConversations = this.getAssignedConversations(
       openConversations
     );
+    const mentionedConversations = this.getMentionedConversations(
+      openConversations
+    );
     const priorityConversations = this.getPriorityConversations(
       openConversations
     );
@@ -479,6 +507,7 @@ export class ConversationsProvider extends React.Component<Props, State> {
       all: {
         open: this.getConversationIds(openConversations),
         assigned: this.getConversationIds(assignedConversations),
+        mentioned: this.getConversationIds(mentionedConversations),
         priority: this.getConversationIds(priorityConversations),
         closed: this.getConversationIds(closedConservations),
       },
@@ -521,9 +550,22 @@ export class ConversationsProvider extends React.Component<Props, State> {
 
   getAssignedConversations = (conversations: Conversation[]) => {
     const {currentUser} = this.state;
+
     return conversations.filter(
       (conversation) => conversation.assignee_id === currentUser?.id
     );
+  };
+
+  getMentionedConversations = (conversations: Conversation[]) => {
+    const {currentUser} = this.state;
+
+    return conversations.filter((conversation) => {
+      const {mentions = []} = conversation;
+
+      return mentions.some((mention) => {
+        return mention.user_id === currentUser?.id;
+      });
+    });
   };
 
   getPriorityConversations = (conversations: Conversation[]) => {
@@ -533,9 +575,12 @@ export class ConversationsProvider extends React.Component<Props, State> {
   };
 
   getUnreadCount = (conversationIds: string[]) => {
-    const {conversationsById} = this.state;
+    const {conversationsById, currentUser} = this.state;
     const conversations = conversationIds.map((id) => conversationsById[id]);
-    return conversations.filter((conversation) => !conversation.read).length;
+
+    return conversations.filter((conversation) =>
+      isUnreadConversation(conversation, currentUser)
+    ).length;
   };
 
   render() {

@@ -3,7 +3,14 @@ import {Link} from 'react-router-dom';
 import {Box, Flex} from 'theme-ui';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
-import {colors, MarkdownRenderer, Result, Text, Title} from '../common';
+import {
+  colors,
+  Container,
+  MarkdownRenderer,
+  Result,
+  Text,
+  Title,
+} from '../common';
 import * as API from '../../api';
 import * as T from '../../types';
 import {formatCustomerDisplayName} from '../customers/support';
@@ -68,7 +75,7 @@ const NotesByCustomer = ({notes}: {notes: Array<T.CustomerNote>}) => {
         const identifier = formatCustomerDisplayName(customer);
 
         return (
-          <Box mb={4} ml={2}>
+          <Box mb={4} ml={2} key={customer.id}>
             <Box mb={1}>
               <Link to={`/customers/${customer.id}?tab=notes`}>
                 <Text strong>{identifier}</Text>
@@ -115,7 +122,7 @@ const NotesByDate = ({notes}: {notes: Array<T.CustomerNote>}) => {
         const formatted = dayjs(date).format('MMMM DD, YYYY');
 
         return (
-          <Box mb={5}>
+          <Box mb={5} key={date}>
             <Title level={3}>{formatted}</Title>
 
             <NotesByCustomer notes={notes} />
@@ -155,7 +162,7 @@ class NotesOverview extends React.Component<Props, State> {
 
     if (loading) {
       return (
-        <Box p={4} sx={{maxWidth: 1080}}>
+        <Container>
           <Flex
             sx={{
               flex: 1,
@@ -166,26 +173,26 @@ class NotesOverview extends React.Component<Props, State> {
           >
             <Spinner size={40} />
           </Flex>
-        </Box>
+        </Container>
       );
     } else if (notes.length === 0) {
       return (
-        <Box p={4} sx={{maxWidth: 1080}}>
+        <Container>
           <Result
             status="success"
             title="No notes"
             subTitle="You haven't written any customer notes yet!"
           />
-        </Box>
+        </Container>
       );
     }
 
     return (
-      <Box p={4} sx={{maxWidth: 1080}}>
+      <Container>
         <Box my={4}>
           <NotesByDate notes={notes} />
         </Box>
-      </Box>
+      </Container>
     );
   }
 }

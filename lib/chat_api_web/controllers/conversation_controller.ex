@@ -74,11 +74,12 @@ defmodule ChatApiWeb.ConversationController do
   @spec index(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def index(conn, params) do
     with %{account_id: account_id} <- conn.assigns.current_user,
+         filters <- format_filter_options(params, conn.assigns.current_user),
          pagination_options <- format_pagination_options(params),
          %{entries: conversations, metadata: pagination} <-
            Conversations.list_conversations_by_account_paginated(
              account_id,
-             params,
+             filters,
              pagination_options
            ) do
       render(conn, "index.json", conversations: conversations, pagination: pagination)
@@ -281,14 +282,15 @@ defmodule ChatApiWeb.ConversationController do
 
   @spec maybe_create_message(Plug.Conn.t(), Conversation.t(), map()) :: any()
   defp maybe_create_message(
-         _conn,
+         conn,
          %Conversation{source: "email"} = conversation,
          %{"message" => %{"body" => body} = _message_params}
        ) do
-    case ChatApi.Google.InitializeGmailThread.send(body, conversation) do
-      %Messages.Message{} -> :ok
-      {:error, message} -> {:error, :unprocessable_entity, message}
-      _ -> {:error, :unprocessable_entity, "Failed to send message"}
+    with %{id: user_id} <- conn.assigns.current_user do
+      case ChatApi.Google.InitializeGmailThread.send(body, conversation, user_id) do
+        %Messages.Message{} -> :ok
+        {:error, message} -> {:error, :unprocessable_entity, message}
+      end
     end
   end
 
@@ -319,14 +321,39 @@ defmodule ChatApiWeb.ConversationController do
 
   defp maybe_create_message(_conn, _conversation, _), do: :ok
 
+  defp format_filter_options(params, current_user) do
+    Enum.reduce(
+      params,
+      %{},
+      fn
+        {"assignee_id", "me"}, acc ->
+          Map.merge(acc, %{"assignee_id" => current_user.id})
+
+        {"mentioning", "me"}, acc ->
+          Map.merge(acc, %{"mentioning" => current_user.id})
+
+        {k, v}, acc ->
+          Map.merge(acc, %{k => v})
+      end
+    )
+  end
+
   defp format_pagination_options(params) do
     Enum.reduce(
       params,
       [],
       fn
-        {"limit", value}, acc -> acc ++ [limit: value]
-        {"after", value}, acc -> acc ++ [after: value]
-        _, acc -> acc
+        {"limit", value}, acc ->
+          case Integer.parse(value) do
+            {limit, ""} -> acc ++ [limit: limit]
+            _ -> acc
+          end
+
+        {"after", value}, acc ->
+          acc ++ [after: value]
+
+        _, acc ->
+          acc
       end
     )
   end

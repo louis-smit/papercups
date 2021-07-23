@@ -519,11 +519,6 @@ defmodule ChatApi.Slack.Helpers do
     |> SlackConversationThreads.create_slack_conversation_thread()
   end
 
-  @spec get_message_type(Message.t()) :: atom()
-  def get_message_type(%Message{customer_id: nil}), do: :agent
-  def get_message_type(%Message{user_id: nil}), do: :customer
-  def get_message_type(_message), do: :unknown
-
   @spec is_bot_message?(map()) :: boolean()
   def is_bot_message?(%{"bot_id" => bot_id}) when not is_nil(bot_id), do: true
   def is_bot_message?(_), do: false
@@ -719,6 +714,10 @@ defmodule ChatApi.Slack.Helpers do
   def format_message_body(%Message{body: nil}), do: ""
   def format_message_body(%Message{private: true, type: "note", body: nil}), do: "\\\\ _Note_"
   def format_message_body(%Message{private: true, type: "note", body: body}), do: "\\\\ _#{body}_"
+
+  def format_message_body(%Message{private: true, type: "bot", body: body}),
+    do: "\\\\ _ #{body} _"
+
   # TODO: handle messages that are too long better (rather than just slicing them)
   def format_message_body(%Message{body: body}) do
     case String.length(body) do
@@ -827,23 +826,44 @@ defmodule ChatApi.Slack.Helpers do
     end
   end
 
+  def format_customer_device(%Customer{browser: nil, os: nil}), do: "N/A"
+
+  def format_customer_device(%Customer{browser: browser, os: os}),
+    do: [os, browser] |> Enum.reject(&is_nil/1) |> Enum.join(" · ")
+
+  def format_message_source(%Message{source: "email", metadata: %{"gmail_subject" => subject}})
+      when is_binary(subject),
+      do: ":email: Email (#{subject})"
+
+  def format_message_source(%Message{source: "email"}), do: ":email: Email"
+  def format_message_source(%Message{source: "chat"}), do: ":speech_balloon: Chat"
+  def format_message_source(%Message{source: "slack"}), do: ":slack: Slack"
+  def format_message_source(%Message{source: "sms"}), do: ":phone: SMS"
+  def format_message_source(%Message{source: "api"}), do: ":robot_face: API"
+  def format_message_source(%Message{source: "mattermost"}), do: "Mattermost"
+  def format_message_source(%Message{source: "sandbox"}), do: "Sandbox"
+  def format_message_source(%Message{source: nil}), do: "N/A"
+  def format_message_source(%Message{source: source}), do: source
+
   @spec get_message_payload(binary(), map()) :: map()
   def get_message_payload(text, %{
         channel: channel,
         conversation: conversation,
-        customer: %Customer{
-          name: name,
-          email: email,
-          current_url: current_url,
-          browser: browser,
-          os: os,
-          time_zone: time_zone
-        },
+        message: message,
+        customer:
+          %Customer{
+            name: name,
+            email: email,
+            current_url: current_url,
+            time_zone: time_zone
+          } = customer,
         thread: nil
       }) do
     %{
       "channel" => channel,
       "unfurl_links" => false,
+      "unfurl_media" => false,
+      "text" => text,
       "blocks" => [
         %{
           "type" => "section",
@@ -865,15 +885,15 @@ defmodule ChatApi.Slack.Helpers do
             },
             %{
               "type" => "mrkdwn",
-              "text" => "*URL:*\n#{current_url || "N/A"}"
+              "text" => "*Source:*\n#{format_message_source(message)}"
             },
             %{
               "type" => "mrkdwn",
-              "text" => "*Browser:*\n#{browser || "N/A"}"
+              "text" => "*Last seen URL:*\n#{current_url || "N/A"}"
             },
             %{
               "type" => "mrkdwn",
-              "text" => "*OS:*\n#{os || "N/A"}"
+              "text" => "*Device:*\n#{format_customer_device(customer)}"
             },
             %{
               "type" => "mrkdwn",

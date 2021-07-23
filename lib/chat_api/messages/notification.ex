@@ -3,7 +3,7 @@ defmodule ChatApi.Messages.Notification do
   Notification handlers for messages
   """
 
-  alias ChatApi.EventSubscriptions
+  alias ChatApi.{EventSubscriptions, Lambdas}
   alias ChatApi.Messages.{Helpers, Message}
 
   require Logger
@@ -47,7 +47,11 @@ defmodule ChatApi.Messages.Notification do
     Logger.info("Sending message notification: :slack (message #{inspect(message.id)})")
 
     case opts do
+      # TODO: deprecate this option
       [metadata: %{"send_to_reply_channel" => false}] ->
+        nil
+
+      [send_to_reply_channel: false] ->
         nil
 
       [async: false] ->
@@ -72,14 +76,29 @@ defmodule ChatApi.Messages.Notification do
     message
   end
 
+  def notify(
+        %Message{metadata: %{"disable_webhook_events" => true}} = message,
+        :webhooks,
+        _opts
+      ),
+      do: message
+
   def notify(%Message{account_id: account_id} = message, :webhooks, _opts) do
     Logger.info("Sending message notification: :webhooks (message #{inspect(message.id)})")
     # TODO: how should we handle errors/retry logic?
     Task.start(fn ->
-      EventSubscriptions.notify_event_subscriptions(account_id, %{
+      event = %{
         "event" => "message:created",
         "payload" => Helpers.format(message)
-      })
+      }
+
+      EventSubscriptions.notify_event_subscriptions(account_id, event)
+
+      # NB: We treat custom lambdas as webhook event handlers for customer messages
+      case Helpers.get_message_type(message) do
+        :customer -> Lambdas.notify_active_lambdas(account_id, event)
+        _ -> nil
+      end
     end)
 
     message
@@ -130,6 +149,39 @@ defmodule ChatApi.Messages.Notification do
     %{message: formatted}
     |> ChatApi.Workers.SendConversationReplyEmail.new(schedule_in: schedule_in)
     |> Oban.insert()
+
+    message
+  end
+
+  def notify(
+        %Message{
+          id: message_id,
+          account_id: account_id,
+          conversation_id: conversation_id,
+          user_id: user_id
+        } = message,
+        :mentions,
+        _opts
+      ) do
+    Logger.info("Sending message notification: :mentions (message #{inspect(message.id)})")
+
+    account_id
+    |> ChatApi.Mentions.list_mentions(%{
+      message_id: message_id,
+      conversation_id: conversation_id,
+      seen_at: nil
+    })
+    |> Stream.filter(& &1.user.has_valid_email)
+    # Avoid sending notifications if users @mention themselves?
+    |> Stream.reject(&(&1.user_id == user_id))
+    |> Enum.each(fn mention ->
+      %{
+        message: Helpers.format(message),
+        user: ChatApiWeb.UserView.render("user.json", user: mention.user)
+      }
+      |> ChatApi.Workers.SendMentionNotification.new()
+      |> Oban.insert()
+    end)
 
     message
   end

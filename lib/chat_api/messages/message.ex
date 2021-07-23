@@ -6,6 +6,7 @@ defmodule ChatApi.Messages.Message do
   alias ChatApi.Accounts.Account
   alias ChatApi.Customers.Customer
   alias ChatApi.Users.User
+  alias ChatApi.Mentions.Mention
   alias ChatApi.Messages.MessageFile
 
   @type t :: %__MODULE__{
@@ -48,6 +49,8 @@ defmodule ChatApi.Messages.Message do
     belongs_to(:customer, Customer)
     belongs_to(:user, User, type: :integer)
 
+    has_many(:mentions, Mention)
+    has_many(:mentioned_users, through: [:mentions, :user])
     has_many(:message_files, MessageFile)
     has_many(:attachments, through: [:message_files, :file])
 
@@ -73,6 +76,14 @@ defmodule ChatApi.Messages.Message do
     ])
     |> validate_required([:account_id, :conversation_id])
     |> validate_inclusion(:type, ["reply", "note", "bot"])
-    |> validate_inclusion(:source, ["chat", "slack", "mattermost", "email", "sms"])
+    |> validate_inclusion(:source, [
+      "chat",
+      "slack",
+      "mattermost",
+      "email",
+      "sms",
+      "api",
+      "sandbox"
+    ])
   end
 end
